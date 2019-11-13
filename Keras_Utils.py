@@ -1681,6 +1681,12 @@ def dice_coef_3D(y_true, y_pred, smooth=0.0001):
     union = K.sum(y_true[...,1:]) + K.sum(y_pred[...,1:])
     return (2. * intersection + smooth) / (union + smooth)
 
+def dice_coef_3D_masked(y_true, y_pred, mask, smooth=0.0001):
+    y_pred *= mask
+    intersection = K.sum(y_true[...,1:] * y_pred[...,1:])
+    union = K.sum(y_true[...,1:]) + K.sum(y_pred[...,1:])
+    return (2. * intersection + smooth) / (union + smooth)
+
 def single_dice(y_true, y_pred, smooth = 0.0001):
     intersection = np.sum(y_true * y_pred)
     union = np.sum(y_true) + np.sum(y_pred)
