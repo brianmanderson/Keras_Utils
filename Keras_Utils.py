@@ -4,21 +4,65 @@ from keras.models import load_model, Model
 import keras.backend as K
 from keras.layers.core import Lambda
 import tensorflow as tf
+import SimpleITK as sitk
 from keras.backend import resize_images, categorical_crossentropy
 from keras.layers import Input, Dropout, SpatialDropout2D, ConvLSTM2D, TimeDistributed, UpSampling2D, Concatenate, \
     SpatialDropout3D, BatchNormalization, Activation, Add, Conv3D, Flatten, UpSampling3D, \
     MaxPooling3D, ZeroPadding3D, Conv2D, Multiply, MaxPooling2D, Reshape, AveragePooling2D
 from tensorflow.compat.v1 import Graph, Session, ConfigProto, GPUOptions
-from TensorflowUtils import load_obj, save_obj, np, remove_non_liver, get_metrics, turn_pickle_into_text, \
+from TensorflowUtils import load_obj, save_obj, np, get_metrics, turn_pickle_into_text, \
     normalize_images, plot_scroll_Image, visualize, plt
 from skimage.measure import block_reduce
 import math, warnings, cv2, os, copy, time, glob
-from scipy.ndimage import interpolation
+from skimage import morphology
 import scipy.ndimage.filters as filts
 from skimage.morphology import label
 # from Predict_On_VGG_Unet_Module_Class import Prediction_Model_Class
 from v3_model import Deeplabv3, BilinearUpsampling
 from tensorflow.python.client import device_lib
+
+
+def remove_non_liver(annotations, threshold=0.5, volume_threshold=9999999, do_2D=False):
+    annotations = copy.deepcopy(annotations)
+    annotations = np.squeeze(annotations)
+    if not annotations.dtype == 'int':
+        annotations[annotations < threshold] = 0
+        annotations[annotations > 0] = 1
+        annotations = annotations.astype('int')
+    labels = morphology.label(annotations, neighbors=4)
+    if np.max(labels) > 1:
+        area = []
+        max_val = 0
+        for i in range(1,labels.max()+1):
+            new_area = labels[labels == i].shape[0]
+            if new_area > volume_threshold:
+                continue
+            area.append(new_area)
+            if new_area == max(area):
+                max_val = i
+        labels[labels != max_val] = 0
+        labels[labels > 0] = 1
+        annotations = labels
+    if do_2D:
+        slice_indexes = np.where(np.sum(annotations,axis=(1,2))>0)
+        if slice_indexes:
+            for slice_index in slice_indexes[0]:
+                labels = morphology.label(annotations[slice_index], connectivity=2)
+                if np.max(labels) == 1:
+                    continue
+                area = []
+                max_val = 0
+                for i in range(1, labels.max() + 1):
+                    new_area = labels[labels == i].shape[0]
+                    if new_area > volume_threshold:
+                        continue
+                    area.append(new_area)
+                    if new_area == max(area):
+                        max_val = i
+                labels[labels != max_val] = 0
+                labels[labels > 0] = 1
+                annotations[slice_index] = labels
+    return annotations
 
 
 def fill_in_overlapping_missing_pixels(liver, mask, slice_thickness, pixel_spacing_x, pixel_spacing_y):
@@ -1722,6 +1766,48 @@ def jaccard_coef_2D(y_true, y_pred, smooth=0.0001):
 
 def jaccard_coef_loss(y_true, y_pred):
     return 1-jaccard_coef_3D(y_true, y_pred)
+
+
+class Fill_Missing_Segments(object):
+    def __init__(self):
+        MauererDistanceMap = sitk.SignedMaurerDistanceMapImageFilter()
+        MauererDistanceMap.SetInsideIsPositive(True)
+        MauererDistanceMap.UseImageSpacingOn()
+        MauererDistanceMap.SquaredDistanceOff()
+        self.MauererDistanceMap = MauererDistanceMap
+    def make_distance_map(self, pred, liver, reduce=True, spacing=(0.975,0.975,2.5)):
+        '''
+        :param pred: A mask of your predictions with N channels on the end, N=0 is background [# Images, 512, 512, N]
+        :param liver: A mask of the desired region [# Images, 512, 512]
+        :param MauererDistanceMap: Filter
+        :param reduce: Save time and only work on masked region
+        :return:
+        '''
+        liver = np.squeeze(liver)
+        pred = np.squeeze(pred)
+        pred = np.round(pred).astype('int')
+        min_z, min_r, max_r, min_c, max_c = 0, 0, 512, 0, 512
+        max_z = pred.shape[0]
+        if reduce:
+            min_z, max_z, min_r, max_r, min_c, max_c = get_bounding_box_indexes(liver)
+        reduced_pred = pred[min_z:max_z,min_r:max_r,min_c:max_c]
+        reduced_liver = liver[min_z:max_z,min_r:max_r,min_c:max_c]
+        reduced_output = np.zeros(reduced_pred.shape)
+        for i in range(1,pred.shape[-1]):
+            temp_reduce = reduced_pred[...,i]
+            image = sitk.GetImageFromArray(temp_reduce)
+            image.SetSpacing(spacing)
+            output = self.MauererDistanceMap.Execute(image)
+            reduced_output[...,i] = sitk.GetArrayFromImage(output)
+        reduced_output[reduced_output>0] = 0
+        reduced_output = np.abs(reduced_output)
+        reduced_output[...,0] = np.inf
+        output = np.zeros(reduced_output.shape,dtype='int')
+        mask = reduced_liver == 1
+        values = reduced_output[mask]
+        output[mask,np.argmin(values,axis=-1)] = 1
+        pred[min_z:max_z,min_r:max_r,min_c:max_c] = output
+        return pred
 
 
 def weighted_categorical_crossentropy(weights):
