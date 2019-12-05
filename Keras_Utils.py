@@ -1143,11 +1143,7 @@ class ModelCheckpoint_new(ModelCheckpoint):
                 self.best = np.Inf
     def set_path(self, path):
         self.path = path
-    def get_current_best(self):
-        self.metric = []
-        epoch_list = list(self.logs.keys())
-        for i in epoch_list[:epoch_list.index(self.epoch+1)+1]:
-            self.metric.append(self.logs[i][self.monitor])
+
     def on_epoch_end(self, epoch, logs=None):
         if not self.is_gpu_model:
             self.save_model = self.model
@@ -1176,34 +1172,6 @@ class ModelCheckpoint_new(ModelCheckpoint):
                         if self.verbose > 0:
                             print('\nEpoch %05d: %s did not improve from %0.5f' %
                                   (epoch + 1, self.monitor, self.best))
-            # if self.save_best_only:
-            #     self.logs = load_obj(self.path)
-            #     self.get_current_best()
-            #     if len(self.metric) > 1:
-            #         self.best = max(self.metric[:-1])
-            #     else:
-            #         self.best = 0.0
-            #     self.epochs_since_last_save = 0
-            #     current = self.metric[-1]
-            #     if current is None:
-            #         warnings.warn('Can save best model only with %s available, '
-            #                       'skipping.' % (self.monitor), RuntimeWarning)
-            #     else:
-            #         if self.metric[-1] >= self.best:
-            #             if self.verbose > 0:
-            #                 print('\nEpoch %05d: %s improved from %0.5f to %0.5f,'
-            #                       ' saving model to %s'
-            #                       % (epoch + 1, self.monitor, self.best,
-            #                          current, filepath))
-            #             self.best = current
-            #             if self.save_weights_only:
-            #                 self.save_model.save_weights(filepath, overwrite=True)
-            #             else:
-            #                 self.save_model.save(filepath, overwrite=True)
-            #         else:
-            #             if self.verbose > 0:
-            #                 print('\nEpoch %05d: %s did not improve from %0.5f' %
-            #                       (epoch + 1, self.monitor, self.best))
             else:
                 self.epochs_since_last_save = 0
                 if self.verbose > 0:
