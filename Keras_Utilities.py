@@ -13,8 +13,6 @@ from skimage.measure import block_reduce
 import math, warnings, cv2, os, copy, time, glob
 from skimage import morphology
 from skimage.morphology import label
-# from Predict_On_VGG_Unet_Module_Class import Prediction_Model_Class
-from v3_model import Deeplabv3, BilinearUpsampling
 from tensorflow.python.client import device_lib
 
 
