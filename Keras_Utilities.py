@@ -65,47 +65,6 @@ def remove_non_liver(annotations, threshold=0.5, volume_threshold=9999999, do_2D
     return annotations
 
 
-def fill_in_overlapping_missing_pixels(liver, mask, slice_thickness, pixel_spacing_x, pixel_spacing_y):
-    zeros = np.expand_dims(np.zeros(liver.shape), axis=-1)
-    output = np.argmax(np.concatenate([zeros, mask[..., 1:]], axis=-1), axis=-1)
-    summed_image = np.sum(mask[..., 1:], axis=-1).astype('int')
-    liver[summed_image>0] = 1
-    overlap_locations = np.where(summed_image > 1)
-    output[overlap_locations] = 0  # Remove overlapping sections
-    removed_overlap = np_utils.to_categorical(output, mask.shape[-1])
-    kernel = np.ones([3, 3, 3]) / 9
-    kernel[0, :, :] = 0
-    kernel[2, :, :] = 0
-    only_edges = np.zeros(removed_overlap.shape)
-    for i in range(1, removed_overlap.shape[-1]):
-        only_edges[..., i] = filts.convolve(removed_overlap[..., i], kernel) * removed_overlap[..., i]
-    data_points = np.where((liver == 1) & ((summed_image == 0) | (summed_image > 1)))
-    points_to_fill = np.concatenate([np.expand_dims(data_points[0], axis=-1),
-                                     np.expand_dims(data_points[1], axis=-1),
-                                     np.expand_dims(data_points[2], axis=-1)], axis=-1)
-    points_to_fill = points_to_fill.astype('int')
-    space_info = np.asarray([slice_thickness, pixel_spacing_x, pixel_spacing_y])
-    output_data = np.zeros([points_to_fill.shape[0], mask.shape[-1] - 1])
-    for i in range(1, only_edges.shape[-1]):
-        print(i)
-        points_in_mask = np.where((only_edges[..., i] > 0) & (only_edges[..., i] < 1))
-        points_in_mask = np.concatenate([np.expand_dims(points_in_mask[0], axis=-1),
-                                         np.expand_dims(points_in_mask[1], axis=-1),
-                                         np.expand_dims(points_in_mask[2], axis=-1)], axis=-1)
-        points_in_mask = points_in_mask.astype('int')
-        dif = (points_to_fill[:, None] - points_in_mask).astype('float16')
-        difference = np.multiply(dif, space_info).astype('float32')
-        difference = np.sqrt(np.sum((difference) ** 2, axis=-1).astype('float32')).astype('float32')
-        difference = np.min(difference, axis=-1).astype('float32')
-        output_data[:, i - 1] = difference
-
-    values = np.argmin(output_data, axis=1) + 1
-    output[data_points] = values  # For each point, what mask does it belong to? Takes the earliest index [7,5,5] will be 1
-    output = np_utils.to_categorical(output, removed_overlap.shape[-1])
-    output[..., 0] = liver
-    return output
-
-
 def freeze_until_name(model,name):
     set_trainable = False
     for layer in model.layers:
