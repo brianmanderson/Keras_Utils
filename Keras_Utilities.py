@@ -6,9 +6,8 @@ from keras.layers.core import Lambda
 import tensorflow as tf
 import SimpleITK as sitk
 from keras.backend import resize_images, categorical_crossentropy
-from keras.layers import Input, Dropout, SpatialDropout2D, ConvLSTM2D, TimeDistributed, UpSampling2D, Concatenate, \
-    SpatialDropout3D, BatchNormalization, Activation, Add, Conv3D, Flatten, UpSampling3D, \
-    MaxPooling3D, ZeroPadding3D, Conv2D, Multiply, MaxPooling2D, Reshape, AveragePooling2D
+from keras.layers import Input, UpSampling3D
+import numpy as np
 from tensorflow.compat.v1 import Graph, Session, ConfigProto, GPUOptions
 from skimage.measure import block_reduce
 import math, warnings, cv2, os, copy, time, glob
@@ -716,16 +715,6 @@ class ModelCheckpoint_new(ModelCheckpoint):
                     self.save_model.save(filepath, overwrite=True)
 
 
-def shuffle_item(item):
-    perm = np.arange(len(item))
-    np.random.shuffle(perm)
-    item = np.asarray(item)[perm]
-    perm = np.arange(len(item))
-    np.random.shuffle(perm)
-    item = list(np.asarray(item)[perm])
-    return item
-
-
 def get_bounding_box_indexes(annotation):
     '''
     :param annotation: A binary image of shape [# images, # rows, # cols, channels]
@@ -966,6 +955,7 @@ def make_resolution_levels(image, annotation, indexes, resolutions=[[64, 64, 64]
         resolutions_out[key_list[resolutions.index(resolution)]]['image'],resolutions_out[key_list[resolutions.index(resolution)]]['annotation'] = temp_x, temp_y
     return resolutions_out
 
+
 def get_bounding_box(train_images_out_base, train_annotations_out_base, include_mask=True,
                      image_size=512, sub_sample=[64,64,64], random_start=True):
     '''
@@ -1017,7 +1007,6 @@ def get_bounding_box(train_images_out_base, train_annotations_out_base, include_
             return min_z, max_z, min_row, max_row, min_col, max_col
     else:
         return min_z, max_z, min_row, max_row, min_col, max_col
-
 
 
 def make_necessary_folders(base_path):
@@ -1230,21 +1219,25 @@ def dice_coef_3D(y_true, y_pred, smooth=0.0001):
     union = K.sum(y_true[...,1:]) + K.sum(y_pred[...,1:])
     return (2. * intersection + smooth) / (union + smooth)
 
+
 def dice_coef_3D_masked(y_true, y_pred, mask, smooth=0.0001):
     y_pred *= mask
     intersection = K.sum(y_true[...,1:] * y_pred[...,1:])
     union = K.sum(y_true[...,1:]) + K.sum(y_pred[...,1:])
     return (2. * intersection + smooth) / (union + smooth)
 
+
 def single_dice(y_true, y_pred, smooth = 0.0001):
     intersection = np.sum(y_true * y_pred)
     union = np.sum(y_true) + np.sum(y_pred)
     return (2. * intersection + smooth) / (union + smooth)
 
+
 def dice_coef_3D_np(y_true, y_pred, smooth=0.0001):
     intersection = np.sum(y_true[...,1:] * y_pred[...,1:])
     union = np.sum(y_true[...,1:]) + np.sum(y_pred[...,1:])
     return (2. * intersection + smooth) / (union + smooth)
+
 
 def dice_coef_2D(y_true, y_pred, smooth=0.0001):
     intersection = K.sum(y_true[:,:,:,1:] * y_pred[:,:,:,1:])
@@ -1255,6 +1248,7 @@ def dice_coef_2D(y_true, y_pred, smooth=0.0001):
     background = (2. * intersection + smooth) / (union + smooth)
     return background + 5*classes
 
+
 def jaccard_coef_3D(y_true, y_pred, smooth=0.0001):
     intersection = K.sum(y_true[:,:,:,:,1:] * y_pred[:,:,:,:,1:])
     union = K.sum(y_true[:,:,:,:,1:]) + K.sum(y_pred[:,:,:,:,1:])
@@ -1264,10 +1258,12 @@ def jaccard_coef_3D(y_true, y_pred, smooth=0.0001):
     background = (intersection + smooth) / (union - intersection)
     return background + 5*classes
 
+
 def jaccard_coef_2D(y_true, y_pred, smooth=0.0001):
     intersection = K.sum(y_true[:,:,:,1:] * y_pred[:,:,:,1:])
     union = K.sum(y_true[:,:,:,1:]) + K.sum(y_pred[:,:,:,1:])
     return (intersection + smooth) / (union - intersection)
+
 
 def jaccard_coef_loss(y_true, y_pred):
     return 1-jaccard_coef_3D(y_true, y_pred)
@@ -1341,11 +1337,6 @@ def weighted_categorical_crossentropy(weights):
         return loss
     return loss
 
-def pad_depth(x, desired_channels):
-    y = K.zeros_like(x, name='pad_depth1')
-    new_channels = desired_channels - x.shape.as_list()[1]
-    y = y[:new_channels,:,:]
-    return Concatenate([x,y], name='pad_depth2')
 
 def masked_mse(mask_value):
     def f(y_true, y_pred):
@@ -1355,8 +1346,11 @@ def masked_mse(mask_value):
         return masked_mse
     f.__name__ = 'Masked MSE (mask_value={})'.format(mask_value)
     return f
+
+
 def mean_squared_error(y_true, y_pred):
     return K.mean(K.square(y_pred - y_true)*100, axis=0) # increase the loss
+
 
 def dice_coef(y_true, y_pred, smooth=0.1):
     """
@@ -1375,8 +1369,8 @@ def get_available_gpus():
 
 class Up_Sample_Class(object):
     def __init__(self):
-        xxx = 1
         self.main()
+
     def main(self):
         input = x = Input(shape=(None, None, None, 3))
         x = UpSampling3D((2,2,2))(x)
