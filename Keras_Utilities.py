@@ -13,7 +13,6 @@ from tensorflow.compat.v1 import Graph, Session, ConfigProto, GPUOptions
 from skimage.measure import block_reduce
 import math, warnings, cv2, os, copy, time, glob
 from skimage import morphology
-import scipy.ndimage.filters as filts
 from skimage.morphology import label
 # from Predict_On_VGG_Unet_Module_Class import Prediction_Model_Class
 from v3_model import Deeplabv3, BilinearUpsampling
@@ -1373,6 +1372,7 @@ def get_available_gpus():
     local_device_protos = device_lib.list_local_devices()
     return [x.name for x in local_device_protos if x.device_type == 'GPU']
 
+
 class Up_Sample_Class(object):
     def __init__(self):
         xxx = 1
@@ -1393,8 +1393,10 @@ def masked_mean_squared_error(y_true,y_pred):
 def weighted_mse(y_true, y_pred, weights):
     return K.mean(K.abs(y_true - y_pred) * weights, axis=-1)
 
+
 def weighted_mse_polar(y_true, y_pred, weights=K.variable(np.array([1,2,2]))):
     return K.mean(K.abs(y_true - y_pred) * weights, axis=-1)
+
 
 def categorical_crossentropy_masked(y_true, y_pred, mask, axis=-1):
     """Categorical crossentropy between an output tensor and a target tensor.
@@ -1436,29 +1438,6 @@ def categorical_crossentropy_masked(y_true, y_pred, mask, axis=-1):
     loss = -K.sum(loss, -1)
     return loss
 
-def expand_dims(x):
-    return K.expand_dims(x,0)
 
-def expand_dims_output_shape(input_shape):
-    return (1, input_shape[0], input_shape[1], input_shape[2], input_shape[3])
-
-def squeeze_dims(x):
-    return K.squeeze(x,0)
-def squeezed_dims_output_shape(input_shape):
-    return (input_shape[1], input_shape[2], input_shape[3], input_shape[4])
-
-ExpandDimension = lambda axis: Lambda(lambda x: K.expand_dims(x, axis))
-SqueezeDimension = lambda axis: Lambda(lambda x: K.squeeze(x, axis))
-
-def create_3D_Addition(model, desired_layer_name=None):
-    all_layers = model.layers
-    layer = [layer for layer in all_layers if layer.name == desired_layer_name][0]
-    layer_output = layer.output  # We already have the input
-    x = ExpandDimension(0)(layer_output)
-    x = Conv3D(16,(3,3,3),activation='elu',padding='same')(x)
-    output = Conv3D(2,(1,1,1),activation='softmax')(x)
-    output = SqueezeDimension(0)(output)
-    activation_model = Model(inputs=model.input, outputs=output)
-    return activation_model
 if __name__ == '__main__':
     xxx = 1
