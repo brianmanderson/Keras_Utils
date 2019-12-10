@@ -10,8 +10,6 @@ from keras.layers import Input, Dropout, SpatialDropout2D, ConvLSTM2D, TimeDistr
     SpatialDropout3D, BatchNormalization, Activation, Add, Conv3D, Flatten, UpSampling3D, \
     MaxPooling3D, ZeroPadding3D, Conv2D, Multiply, MaxPooling2D, Reshape, AveragePooling2D
 from tensorflow.compat.v1 import Graph, Session, ConfigProto, GPUOptions
-from TensorflowUtils import load_obj, save_obj, np, get_metrics, turn_pickle_into_text, \
-    normalize_images, plot_scroll_Image, visualize, plt
 from skimage.measure import block_reduce
 import math, warnings, cv2, os, copy, time, glob
 from skimage import morphology
@@ -101,7 +99,6 @@ def jaccard_distance_loss(y_true, y_pred, smooth=100):
     sum_ = K.sum(K.abs(y_true) + K.abs(y_pred), axis=-1)
     jac = (intersection + smooth) / (sum_ - intersection + smooth)
     return (1 - jac) * smooth
-
 
 
 def dice_coef_loss(y_true, y_pred):
@@ -753,6 +750,7 @@ def get_bounding_box_indexes(annotation):
     min_c_s, max_c_s = indexes[0], indexes[-1]
     return min_z_s, int(max_z_s + 1), min_r_s, int(max_r_s + 1), min_c_s, int(max_c_s + 1)
 
+
 def pad_images(images,annotations,output_size=None,value=0):
     if not output_size:
         print('did not provide a desired size')
@@ -770,6 +768,7 @@ def pad_images(images,annotations,output_size=None,value=0):
         images, annotations = np.pad(images, final_pad, 'constant', constant_values=(value)), \
                         np.pad(annotations, final_pad, 'constant', constant_values=(0))
     return images, annotations
+
 
 def pull_cube_from_image(images, annotation, desired_size=(16,32,32), samples=10):
     output_images = np.ones([samples,desired_size[0],desired_size[1],desired_size[2],1])*np.min(images)
@@ -878,6 +877,7 @@ def cartesian_to_polar(xyz):
     if reshape:
         polar_points = np.reshape(polar_points,input_shape)
     return polar_points
+
 
 def polar_to_cartesian(polar_xyz):
     '''
