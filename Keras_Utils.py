@@ -1804,6 +1804,42 @@ def weighted_categorical_crossentropy(weights):
         return loss
     return loss
 
+
+def weighted_categorical_crossentropy_masked(weights):
+    """
+    A weighted version of keras.objectives.categorical_crossentropy
+
+    Variables:
+        weights: numpy array of shape (C,) where C is the number of classes
+
+    Usage:
+        weights = np.array([0.5,2,10]) # Class one at 0.5, class 2 twice the normal weights, class 3 10x.
+        loss = weighted_categorical_crossentropy(weights)
+        model.compile(loss=loss,optimizer='adam')
+    """
+
+    weights = K.variable(weights)
+
+    def loss(y_true, y_pred, mask, axis=-1):
+        output_dimensions = list(range(len(y_pred.get_shape())))
+        if axis != -1 and axis not in output_dimensions:
+            raise ValueError(
+                '{}{}{}'.format(
+                    'Unexpected channels axis {}. '.format(axis),
+                    'Expected to be -1 or one of the axes of `output`, ',
+                    'which has {} dimensions.'.format(len(y_pred.get_shape()))))
+
+        y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
+        # clip to prevent NaN's and Inf's
+        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+        loss = y_true * K.log(y_pred) * weights
+        loss = loss * mask
+        loss = -K.sum(loss, -1)
+        return loss
+    return loss
+
+
+
 def pad_depth(x, desired_channels):
     y = K.zeros_like(x, name='pad_depth1')
     new_channels = desired_channels - x.shape.as_list()[1]
