@@ -1,16 +1,14 @@
-from keras.utils import Sequence, np_utils
-from keras.callbacks import Callback, LearningRateScheduler, ModelCheckpoint, TensorBoard
+from keras.callbacks import Callback, LearningRateScheduler, ModelCheckpoint
 from keras.models import load_model, Model
 import keras.backend as K
-from keras.layers.core import Lambda
 import tensorflow as tf
 import SimpleITK as sitk
-from keras.backend import resize_images, categorical_crossentropy
+from keras.backend import resize_images
 from keras.layers import Input, UpSampling3D
 import numpy as np
 from tensorflow.compat.v1 import Graph, Session, ConfigProto, GPUOptions
 from skimage.measure import block_reduce
-import math, warnings, cv2, os, copy, time, glob
+import math, warnings, cv2, os, copy, time, glob, pickle
 from skimage import morphology
 from skimage.morphology import label
 from tensorflow.python.client import device_lib
