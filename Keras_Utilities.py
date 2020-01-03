@@ -6,19 +6,13 @@ from keras.layers.core import Lambda
 import tensorflow as tf
 import SimpleITK as sitk
 from keras.backend import resize_images, categorical_crossentropy
-from keras.layers import Input, Dropout, SpatialDropout2D, ConvLSTM2D, TimeDistributed, UpSampling2D, Concatenate, \
-    SpatialDropout3D, BatchNormalization, Activation, Add, Conv3D, Flatten, UpSampling3D, \
-    MaxPooling3D, ZeroPadding3D, Conv2D, Multiply, MaxPooling2D, Reshape, AveragePooling2D
+from keras.layers import Input, UpSampling3D
+import numpy as np
 from tensorflow.compat.v1 import Graph, Session, ConfigProto, GPUOptions
-from TensorflowUtils import load_obj, save_obj, np, get_metrics, turn_pickle_into_text, \
-    normalize_images, plot_scroll_Image, visualize, plt
 from skimage.measure import block_reduce
 import math, warnings, cv2, os, copy, time, glob
 from skimage import morphology
-import scipy.ndimage.filters as filts
 from skimage.morphology import label
-# from Predict_On_VGG_Unet_Module_Class import Prediction_Model_Class
-from v3_model import Deeplabv3, BilinearUpsampling
 from tensorflow.python.client import device_lib
 
 
@@ -65,46 +59,6 @@ def remove_non_liver(annotations, threshold=0.5, volume_threshold=9999999, do_2D
     return annotations
 
 
-def fill_in_overlapping_missing_pixels(liver, mask, slice_thickness, pixel_spacing_x, pixel_spacing_y):
-    zeros = np.expand_dims(np.zeros(liver.shape), axis=-1)
-    output = np.argmax(np.concatenate([zeros, mask[..., 1:]], axis=-1), axis=-1)
-    summed_image = np.sum(mask[..., 1:], axis=-1).astype('int')
-    liver[summed_image>0] = 1
-    overlap_locations = np.where(summed_image > 1)
-    output[overlap_locations] = 0  # Remove overlapping sections
-    removed_overlap = np_utils.to_categorical(output, mask.shape[-1])
-    kernel = np.ones([3, 3, 3]) / 9
-    kernel[0, :, :] = 0
-    kernel[2, :, :] = 0
-    only_edges = np.zeros(removed_overlap.shape)
-    for i in range(1, removed_overlap.shape[-1]):
-        only_edges[..., i] = filts.convolve(removed_overlap[..., i], kernel) * removed_overlap[..., i]
-    data_points = np.where((liver == 1) & ((summed_image == 0) | (summed_image > 1)))
-    points_to_fill = np.concatenate([np.expand_dims(data_points[0], axis=-1),
-                                     np.expand_dims(data_points[1], axis=-1),
-                                     np.expand_dims(data_points[2], axis=-1)], axis=-1)
-    points_to_fill = points_to_fill.astype('int')
-    space_info = np.asarray([slice_thickness, pixel_spacing_x, pixel_spacing_y])
-    output_data = np.zeros([points_to_fill.shape[0], mask.shape[-1] - 1])
-    for i in range(1, only_edges.shape[-1]):
-        print(i)
-        points_in_mask = np.where((only_edges[..., i] > 0) & (only_edges[..., i] < 1))
-        points_in_mask = np.concatenate([np.expand_dims(points_in_mask[0], axis=-1),
-                                         np.expand_dims(points_in_mask[1], axis=-1),
-                                         np.expand_dims(points_in_mask[2], axis=-1)], axis=-1)
-        points_in_mask = points_in_mask.astype('int')
-        dif = (points_to_fill[:, None] - points_in_mask).astype('float16')
-        difference = np.multiply(dif, space_info).astype('float32')
-        difference = np.sqrt(np.sum((difference) ** 2, axis=-1).astype('float32')).astype('float32')
-        difference = np.min(difference, axis=-1).astype('float32')
-        output_data[:, i - 1] = difference
-
-    values = np.argmin(output_data, axis=1) + 1
-    output[data_points] = values  # For each point, what mask does it belong to? Takes the earliest index [7,5,5] will be 1
-    output = np_utils.to_categorical(output, removed_overlap.shape[-1])
-    output[..., 0] = liver
-    return output
-
 def freeze_until_name(model,name):
     set_trainable = False
     for layer in model.layers:
@@ -113,6 +67,7 @@ def freeze_until_name(model,name):
         layer.trainable = set_trainable
     return model
 
+
 def freeze_names(model,desc):
     for layer in model.layers:
         if layer.name.find(desc) == -1:
@@ -120,429 +75,6 @@ def freeze_names(model,desc):
         else:
             layer.trainable = True
     return model
-
-class Pyramid_Pool_3D(object):
-
-    def __init__(self, start_block=32, channels=1, filter_vals=None,num_of_classes=2,num_layers=2, resolutions=[64,128,128]):
-        self.start_block = start_block
-        self.resolutions = resolutions
-        if filter_vals is None:
-            filter_vals = [5,5,5]
-        self.pool_size = (2,2,2)
-        self.filter_vals = filter_vals
-        self.channels = channels
-        self.num_of_classes = num_of_classes
-        self.num_layers = num_layers
-        self.activation = 'relu'
-        self.unet()
-
-    def residual_block(self,output_size,x, drop=0.0, short_cut=False, prefix=''):
-        inputs = x
-        x = Conv3D(output_size, self.filters, activation=None, padding='same',
-                   name=self.image_resolution + '_conv' + str(self.layer) + '_0_UNet' + prefix)(x)
-        x = BatchNormalization()(x)
-        x = Activation(self.activation)(x)
-        x = Conv3D(output_size, self.filters, activation=None, padding='same',
-                   name=self.image_resolution + '_conv' + str(self.layer) + '_1_UNet' + prefix)(x)
-        x = BatchNormalization()(x)
-        x = SpatialDropout3D(drop)(x)
-
-        x = Conv3D(output_size, kernel_size=(1, 1, 1), strides=(1,1,1), padding='same',
-                           name=self.image_resolution + '_conv' + str(self.layer) + '_2_UNet' + prefix)(x)
-        x = BatchNormalization()(x)
-        if short_cut:
-            x = Add(name=self.image_resolution + '_skip' + str(self.layer) + '_UNet' + prefix)([x,inputs])
-        x = Activation(self.activation)(x)
-
-        return x
-
-    def unet(self):
-        high_image = Input([self.resolutions[0], self.resolutions[1], self.resolutions[2], self.channels])
-        medium_image = Input([self.resolutions[0], self.resolutions[1], self.resolutions[2], self.channels])
-        low_image = Input([self.resolutions[0], self.resolutions[1], self.resolutions[2], self.channels])
-        self.data_dict = {'high':{'Input':high_image},'medium':{'Input':medium_image},'low':{'Input':low_image}}
-        self.filters = (self.filter_vals[0], self.filter_vals[1], self.filter_vals[2])
-        self.layer = 1
-
-        '''
-        First, do the low resolution block
-        '''
-        self.image_resolution = 'low'
-        x = self.data_dict[self.image_resolution]['Input']
-        self.res_block(x)
-        '''
-        Then, concatenate results and do medium block
-        '''
-        self.image_resolution = 'medium'
-        x = Concatenate()([self.data_dict['medium']['Input'],self.data_dict['low']['last_layer']])
-        self.res_block(x)
-        '''
-        Lastly, concatenate results and do high block
-        '''
-        self.image_resolution = 'high'
-        x = Concatenate()([self.data_dict['high']['Input'], self.data_dict['medium']['last_layer']])
-        self.res_block(x)
-        self.model = Model(inputs=[self.data_dict['high']['Input'], self.data_dict['medium']['Input'],
-                                   self.data_dict['low']['Input']],
-                           outputs=[self.data_dict['high']['last_layer'],self.data_dict['medium']['last_layer'],
-                                    self.data_dict['low']['last_layer']],
-                           name='Multi_Scale_BMA')
-
-    def res_block(self, x):
-        drop_out = 0.0
-        for self.layer in range(self.num_layers):
-            short_cut = False
-            self.start_block = int(self.start_block * 2)
-            x = self.residual_block(int(self.start_block), x, drop=drop_out, short_cut=short_cut, prefix='_Down_0')
-            drop_out = 0.2
-            short_cut = True
-            x = self.residual_block(int(self.start_block), x, drop=drop_out, short_cut=short_cut, prefix='_Down_1')
-            self.data_dict[self.image_resolution][str(self.layer)] = x
-            x = MaxPooling3D()(x)
-
-        for self.layer in range(self.num_layers-1,-1,-1):
-            short_cut = False
-            x = UpSampling3D()(x)
-            x = Concatenate()([x,self.data_dict[self.image_resolution][str(self.layer)]])
-            self.start_block = int(self.start_block / 2)
-            x = self.residual_block(int(self.start_block), x, drop=drop_out, short_cut=short_cut, prefix='_Up_0')
-            drop_out = 0.2
-            short_cut = True
-            x = self.residual_block(int(self.start_block), x, drop=drop_out, short_cut=short_cut, prefix='_Up_1')
-        x = Conv3D(self.num_of_classes, (1, 1, 1), padding='same', activation='softmax', name=self.image_resolution + '_last_layer')(x)
-        self.data_dict[self.image_resolution]['last_layer'] = x
-
-
-class Attrous_3D(object):
-
-    def __init__(self, image_size=25, batch_size=32, channels=3, filter_vals=None,num_of_classes=2,num_layers=2):
-        if filter_vals is None:
-            filter_vals = [5,5,5]
-        self.pool_size = (2,2,2)
-        self.filter_vals = filter_vals
-        self.channels = channels
-        self.image_size = image_size
-        self.num_of_classes = num_of_classes
-        self.num_layers = num_layers
-        self.batch_size = batch_size
-        self.activation = 'relu'
-        self.unet()
-
-    def atrous_conv_block(self, prefix,x,rate,drop=0.0, kernel_size=3, stride=1, epsilon=1e-3):
-        if stride == 1:
-            depth_padding = 'same'
-        else:
-            kernel_size_effective = kernel_size + (kernel_size - 1) * (rate - 1)
-            pad_total = kernel_size_effective - 1
-            pad_beg = pad_total // 2
-            pad_end = pad_total - pad_beg
-            x = ZeroPadding3D((pad_beg, pad_end, pad_end))(x)
-            depth_padding = 'valid'
-        x = Conv3D((kernel_size, kernel_size, kernel_size), strides=(stride, stride, stride), dilation_rate=(rate, rate, rate),
-                            padding=depth_padding, use_bias=False, name=prefix + '_3Dconv')(x)
-        x = BatchNormalization(name=prefix + '_3Dconv_BN', epsilon=epsilon)(x)
-        x = Activation('relu')(x)
-        if drop > 0.0:
-            x = SpatialDropout3D(drop)(x)
-        return x
-
-    def unet(self):
-        x = input_image = Input([16, 32, 32, 1])
-        self.filters = (self.filter_vals[0], self.filter_vals[1], self.filter_vals[2])
-        self.layer = 1
-        layer_vals = {}
-        block = 30
-        drop_out = 0.0
-        for i in range(self.num_layers):
-            block += 10
-            rate_1 = self.atrous_conv_block('block_' + str(i), rate=1, drop=drop_out, x=x)
-            rate_2 = self.atrous_conv_block('block_' + str(i), rate=2, drop=drop_out, x=x)
-            x = Concatenate()([rate_1,rate_2])
-
-            drop_out = 0.2
-        x = self.residual_block(int(150), x_concat, drop=drop_out)
-        x = Conv3D(self.num_of_classes, (1, 1, 1), padding='same', name='last_layer')(x)
-        x = Activation('softmax')(x)
-        self.model = Model(inputs=[fine_image,coarse_image], outputs=[x], name='DeepMedic')
-
-
-class TDLSTM_Conv(object):
-    def __init__(self, input_batch=16,input_image=256,input_channels=33, start_block=64, layers=2):
-        self.input_image = input_image
-        self.input_batch = input_batch
-        self.input_channels = input_channels
-        self.layer_start = start_block
-        self.num_classes = 2
-        self.layers = layers
-        self.block = 0
-        self.activation = 'elu'
-        self.conv_number = 2
-        self.unet_network()
-
-
-    def conv_block(self, x):
-        for i in range(self.conv_number):
-            x = ConvLSTM2D(filters=int(self.layer_start), kernel_size=(3,3), padding='same', return_sequences=True,
-                           activation=None, name='conv_block_' + str(self.desc) + str(self.i) + '_' + str(i))(x)
-            x = BatchNormalization()(x)
-            x = Activation(self.activation)(x)
-            if self.drop_out_spatial > 0.0:
-                x = SpatialDropout3D(self.drop_out_spatial)(x)
-            if self.drop_out > 0.0:
-                x = Dropout(self.drop_out)(x)
-            self.i += 1
-        return x
-
-    def up_sample_out(self,x):
-        pool_size = int(self.input_image/int(x.shape[3]))
-        if pool_size != 1:
-            x = TimeDistributed(UpSampling2D((pool_size, pool_size)))(x)
-        filters = 64
-        for i in range(2):
-            x = ConvLSTM2D(filters=int(filters), kernel_size=(3,3), padding='same', return_sequences=True,
-                           activation=None, name='up_sample_conv_block_' + str(self.desc) + str(self.i) + '_' + str(i))(x)
-            x = BatchNormalization()(x)
-            x = Activation(self.activation)(x)
-            if self.drop_out_spatial > 0.0:
-                x = SpatialDropout3D(self.drop_out_spatial)(x)
-            if self.drop_out > 0.0:
-                x = Dropout(self.drop_out)(x)
-            filters /= 2
-        self.layer_up += 1
-        self.i += 1
-        return x
-    def unet_network(self):
-        input_image = Input([self.input_batch,self.input_image,self.input_image,self.input_channels], name='input')
-
-        x = input_image
-        net = {}
-        output_net = {}
-        self.drop_out = 0.0
-        self.drop_out_spatial = 0.2
-        self.desc = 'down_'
-        self.i = 0
-        for self.block in range(self.layers):
-            x = self.conv_block(x)
-            net['conv ' + str(self.block)] = x
-            x = TimeDistributed(MaxPooling2D((2,2), (2,2)))(x)
-            self.layer_start *= 2
-
-        self.layer_up = 0
-        x = self.conv_block(x)
-
-        self.desc = 'up_'
-        for self.block in range(self.layers-1,-1,-1):
-            # output_net['up_conv' + str(self.layer_up)] = self.up_sample_out(x)
-            self.layer_start /= 2
-            x = TimeDistributed(UpSampling2D((2,2)))(x)
-            x = Concatenate(name='concat' + str(self.block) + '_Unet')([x, net['conv ' + str(self.block)]])
-            x = self.conv_block(x)
-
-        # keys = list(output_net.keys())
-        # for key in keys:
-        #     x = Concatenate()([x,output_net[key]])
-
-        output = ConvLSTM2D(filters=self.num_classes, kernel_size=(3, 3), padding='same', return_sequences=True,
-                       activation='softmax', name='output')(x)
-        output = Flatten()(output)
-
-        self.created_model = Model(input_image, outputs=[output])
-        return None
-    def network(self):
-        input_image = Input([self.input_batch,self.input_image,self.input_image,self.input_channels], name='input')
-
-        x = input_image
-        self.drop_out = 0.0
-        self.drop_out_spatial = 0.2
-        self.desc = 'down_'
-        self.i = 0
-        x = self.conv_block(x)
-
-        output = ConvLSTM2D(filters=self.num_classes, kernel_size=(3, 3), padding='same', return_sequences=True,
-                       activation='softmax', name='output')(x)
-        output = Flatten()(output)
-
-        self.created_model = Model(input_image, outputs=[output])
-        return None
-
-class VGG16_class(object):
-
-    def __init__(self):
-        self.trainable = False
-        self.activation = 'relu'
-        self.filters = 64
-        self.block = 1
-        self.drop_out = 0.0
-
-    def conv_block(self, x):
-        for layer in range(1,self.layers+1):
-            x = Conv2D(self.filters, (3, 3), activation=None, padding='same', name='block' + str(self.block) + '_conv'+str(layer),
-                       trainable=self.trainable)(x)
-            x = Activation(self.activation)(x)
-            x = BatchNormalization()(x)
-            if self.drop_out > 0.0:
-                x = SpatialDropout2D(0.2)(x)
-        return x
-
-    def VGG16(self,include_top=True, weights='imagenet',
-              input_tensor=None, input_shape=None,
-              pooling=None,
-              classes=1000, only_vals=False, use_3d_unet=False, trainable=True):
-        """Instantiates the VGG16 architecture.
-
-        Optionally loads weights pre-trained
-        on ImageNet. Note that when using TensorFlow,
-        for best performance you should set
-        `image_data_format='channels_last'` in your Keras config
-        at ~/.keras/keras.json.
-
-        The model and the weights are compatible with both
-        TensorFlow and Theano. The data format
-        convention used by the model is the one
-        specified in your Keras config file.
-
-        # Arguments
-            include_top: whether to include the 3 fully-connected
-                layers at the top of the network.
-            weights: one of `None` (random initialization),
-                  'imagenet' (pre-training on ImageNet),
-                  or the path to the weights file to be loaded.
-            input_tensor: optional Keras tensor (i.e. output of `layers.Input()`)
-                to use as image input for the model.
-            input_shape: optional shape tuple, only to be specified
-                if `include_top` is False (otherwise the input shape
-                has to be `(224, 224, 3)` (with `channels_last` data format)
-                or `(3, 224, 224)` (with `channels_first` data format).
-                It should have exactly 3 input channels,
-                and width and height should be no smaller than 48.
-                E.g. `(200, 200, 3)` would be one valid value.
-            pooling: Optional pooling mode for feature extraction
-                when `include_top` is `False`.
-                - `None` means that the output of the model will be
-                    the 4D tensor output of the
-                    last convolutional layer.
-                - `avg` means that global average pooling
-                    will be applied to the output of the
-                    last convolutional layer, and thus
-                    the output of the model will be a 2D tensor.
-                - `max` means that global max pooling will
-                    be applied.
-            classes: optional number of classes to classify images
-                into, only to be specified if `include_top` is True, and
-                if no `weights` argument is specified.
-
-        # Returns
-            A Keras model instance.
-
-        # Raises
-            ValueError: in case of invalid argument for `weights`,
-                or invalid input shape.
-        """
-        WEIGHTS_PATH = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg16_weights_tf_dim_ordering_tf_kernels.h5'
-        WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5'
-
-        if not (weights in {'imagenet', None} or os.path.exists(weights)):
-            raise ValueError('The `weights` argument should be either '
-                             '`None` (random initialization), `imagenet` '
-                             '(pre-training on ImageNet), '
-                             'or the path to the weights file to be loaded.')
-
-        if weights == 'imagenet' and include_top and classes != 1000:
-            raise ValueError('If using `weights` as imagenet with `include_top`'
-                             ' as true, `classes` should be 1000')
-        # Determine proper input shape
-        input_shape = _obtain_input_shape(input_shape,
-                                          default_size=224,
-                                          min_size=48,
-                                          data_format=K.image_data_format(),
-                                          require_flatten=include_top,
-                                          weights=weights)
-
-        if input_tensor is None:
-            img_input = Input(shape=input_shape)
-        else:
-            if not K.is_keras_tensor(input_tensor):
-                img_input = Input(tensor=input_tensor, shape=input_shape)
-            else:
-                img_input = input_tensor
-        # Block 1
-        net = {}
-        layout = [2,2,3,3,3]
-        x = img_input
-        for self.block in range(1,6):
-            if self.block > 2 and trainable:
-                self.trainable = True # Freeze the first 2 layers
-            if self.trainable:
-                self.drop_out = 0.0
-            self.layers = layout[self.block-1]
-            x = self.conv_block(x)
-            if self.filters < 512:
-                self.filters *= 2
-            # if use_3d_unet:
-            #     net['conv_block' + str(self.block) + '_pool'] = x
-            net['block' + str(self.block) + '_pool'] = x
-            if self.block < 5:
-                x = MaxPooling2D((2, 2), strides=(2, 2), name='block' + str(self.block) + '_pool')(x)
-
-        if only_vals:
-            return img_input, x, net
-        if include_top:
-            # Classification block
-            x = Flatten(name='flatten')(x)
-            x = Dense(4096, activation='relu', name='fc1')(x)
-            x = Dense(4096, activation='relu', name='fc2')(x)
-            x = Dense(classes, activation='softmax', name='predictions')(x)
-        else:
-            if pooling == 'avg':
-                x = GlobalAveragePooling2D()(x)
-            elif pooling == 'max':
-                x = GlobalMaxPooling2D()(x)
-
-        # Ensure that the model takes into account
-        # any potential predecessors of `input_tensor`.
-        if input_tensor is not None:
-            inputs = get_source_inputs(input_tensor)
-        else:
-            inputs = img_input
-        # Create model.
-        model = Model(inputs, x, name='vgg16')
-
-        # load weights
-        if weights == 'imagenet':
-            if include_top:
-                weights_path = get_file('vgg16_weights_tf_dim_ordering_tf_kernels.h5',
-                                        WEIGHTS_PATH,
-                                        cache_subdir='models',
-                                        file_hash='64373286793e3c8b2b4e3219cbf3544b')
-            else:
-                weights_path = get_file('vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5',
-                                        WEIGHTS_PATH_NO_TOP,
-                                        cache_subdir='models',
-                                        file_hash='6d6bbae143d832006294945121d1f1fc')
-            model.load_weights(weights_path)
-            if K.backend() == 'theano':
-                layer_utils.convert_all_kernels_in_model(model)
-
-            if K.image_data_format() == 'channels_first':
-                if include_top:
-                    maxpool = model.get_layer(name='block5_pool')
-                    shape = maxpool.output_shape[1:]
-                    dense = model.get_layer(name='fc1')
-                    layer_utils.convert_dense_weights_data_format(dense, shape, 'channels_first')
-
-                if K.backend() == 'tensorflow':
-                    warnings.warn('You are using the TensorFlow backend, yet you '
-                                  'are using the Theano '
-                                  'image data format convention '
-                                  '(`image_data_format="channels_first"`). '
-                                  'For best performance, set '
-                                  '`image_data_format="channels_last"` in '
-                                  'your Keras config '
-                                  'at ~/.keras/keras.json.')
-        elif weights is not None:
-            model.load_weights(weights)
-
-        return model
 
 
 def jaccard_distance_loss(y_true, y_pred, smooth=100):
@@ -563,7 +95,6 @@ def jaccard_distance_loss(y_true, y_pred, smooth=100):
     sum_ = K.sum(K.abs(y_true) + K.abs(y_pred), axis=-1)
     jac = (intersection + smooth) / (sum_ - intersection + smooth)
     return (1 - jac) * smooth
-
 
 
 def dice_coef_loss(y_true, y_pred):
@@ -1182,16 +713,6 @@ class ModelCheckpoint_new(ModelCheckpoint):
                     self.save_model.save(filepath, overwrite=True)
 
 
-def shuffle_item(item):
-    perm = np.arange(len(item))
-    np.random.shuffle(perm)
-    item = np.asarray(item)[perm]
-    perm = np.arange(len(item))
-    np.random.shuffle(perm)
-    item = list(np.asarray(item)[perm])
-    return item
-
-
 def get_bounding_box_indexes(annotation):
     '''
     :param annotation: A binary image of shape [# images, # rows, # cols, channels]
@@ -1215,6 +736,7 @@ def get_bounding_box_indexes(annotation):
     min_c_s, max_c_s = indexes[0], indexes[-1]
     return min_z_s, int(max_z_s + 1), min_r_s, int(max_r_s + 1), min_c_s, int(max_c_s + 1)
 
+
 def pad_images(images,annotations,output_size=None,value=0):
     if not output_size:
         print('did not provide a desired size')
@@ -1232,6 +754,7 @@ def pad_images(images,annotations,output_size=None,value=0):
         images, annotations = np.pad(images, final_pad, 'constant', constant_values=(value)), \
                         np.pad(annotations, final_pad, 'constant', constant_values=(0))
     return images, annotations
+
 
 def pull_cube_from_image(images, annotation, desired_size=(16,32,32), samples=10):
     output_images = np.ones([samples,desired_size[0],desired_size[1],desired_size[2],1])*np.min(images)
@@ -1341,6 +864,7 @@ def cartesian_to_polar(xyz):
         polar_points = np.reshape(polar_points,input_shape)
     return polar_points
 
+
 def polar_to_cartesian(polar_xyz):
     '''
     :param polar_xyz: in the form of radius, elevation away from z axis, and elevation from y axis
@@ -1429,6 +953,7 @@ def make_resolution_levels(image, annotation, indexes, resolutions=[[64, 64, 64]
         resolutions_out[key_list[resolutions.index(resolution)]]['image'],resolutions_out[key_list[resolutions.index(resolution)]]['annotation'] = temp_x, temp_y
     return resolutions_out
 
+
 def get_bounding_box(train_images_out_base, train_annotations_out_base, include_mask=True,
                      image_size=512, sub_sample=[64,64,64], random_start=True):
     '''
@@ -1480,7 +1005,6 @@ def get_bounding_box(train_images_out_base, train_annotations_out_base, include_
             return min_z, max_z, min_row, max_row, min_col, max_col
     else:
         return min_z, max_z, min_row, max_row, min_col, max_col
-
 
 
 def make_necessary_folders(base_path):
@@ -1693,21 +1217,25 @@ def dice_coef_3D(y_true, y_pred, smooth=0.0001):
     union = K.sum(y_true[...,1:]) + K.sum(y_pred[...,1:])
     return (2. * intersection + smooth) / (union + smooth)
 
+
 def dice_coef_3D_masked(y_true, y_pred, mask, smooth=0.0001):
     y_pred *= mask
     intersection = K.sum(y_true[...,1:] * y_pred[...,1:])
     union = K.sum(y_true[...,1:]) + K.sum(y_pred[...,1:])
     return (2. * intersection + smooth) / (union + smooth)
 
+
 def single_dice(y_true, y_pred, smooth = 0.0001):
     intersection = np.sum(y_true * y_pred)
     union = np.sum(y_true) + np.sum(y_pred)
     return (2. * intersection + smooth) / (union + smooth)
 
+
 def dice_coef_3D_np(y_true, y_pred, smooth=0.0001):
     intersection = np.sum(y_true[...,1:] * y_pred[...,1:])
     union = np.sum(y_true[...,1:]) + np.sum(y_pred[...,1:])
     return (2. * intersection + smooth) / (union + smooth)
+
 
 def dice_coef_2D(y_true, y_pred, smooth=0.0001):
     intersection = K.sum(y_true[:,:,:,1:] * y_pred[:,:,:,1:])
@@ -1718,6 +1246,7 @@ def dice_coef_2D(y_true, y_pred, smooth=0.0001):
     background = (2. * intersection + smooth) / (union + smooth)
     return background + 5*classes
 
+
 def jaccard_coef_3D(y_true, y_pred, smooth=0.0001):
     intersection = K.sum(y_true[:,:,:,:,1:] * y_pred[:,:,:,:,1:])
     union = K.sum(y_true[:,:,:,:,1:]) + K.sum(y_pred[:,:,:,:,1:])
@@ -1727,10 +1256,12 @@ def jaccard_coef_3D(y_true, y_pred, smooth=0.0001):
     background = (intersection + smooth) / (union - intersection)
     return background + 5*classes
 
+
 def jaccard_coef_2D(y_true, y_pred, smooth=0.0001):
     intersection = K.sum(y_true[:,:,:,1:] * y_pred[:,:,:,1:])
     union = K.sum(y_true[:,:,:,1:]) + K.sum(y_pred[:,:,:,1:])
     return (intersection + smooth) / (union - intersection)
+
 
 def jaccard_coef_loss(y_true, y_pred):
     return 1-jaccard_coef_3D(y_true, y_pred)
@@ -1854,8 +1385,11 @@ def masked_mse(mask_value):
         return masked_mse
     f.__name__ = 'Masked MSE (mask_value={})'.format(mask_value)
     return f
+
+
 def mean_squared_error(y_true, y_pred):
     return K.mean(K.square(y_pred - y_true)*100, axis=0) # increase the loss
+
 
 def dice_coef(y_true, y_pred, smooth=0.1):
     """
@@ -1871,10 +1405,11 @@ def get_available_gpus():
     local_device_protos = device_lib.list_local_devices()
     return [x.name for x in local_device_protos if x.device_type == 'GPU']
 
+
 class Up_Sample_Class(object):
     def __init__(self):
-        xxx = 1
         self.main()
+
     def main(self):
         input = x = Input(shape=(None, None, None, 3))
         x = UpSampling3D((2,2,2))(x)
@@ -1891,8 +1426,10 @@ def masked_mean_squared_error(y_true,y_pred):
 def weighted_mse(y_true, y_pred, weights):
     return K.mean(K.abs(y_true - y_pred) * weights, axis=-1)
 
+
 def weighted_mse_polar(y_true, y_pred, weights=K.variable(np.array([1,2,2]))):
     return K.mean(K.abs(y_true - y_pred) * weights, axis=-1)
+
 
 def categorical_crossentropy_masked(y_true, y_pred, mask, axis=-1):
     """Categorical crossentropy between an output tensor and a target tensor.
@@ -1934,29 +1471,6 @@ def categorical_crossentropy_masked(y_true, y_pred, mask, axis=-1):
     loss = -K.sum(loss, -1)
     return loss
 
-def expand_dims(x):
-    return K.expand_dims(x,0)
 
-def expand_dims_output_shape(input_shape):
-    return (1, input_shape[0], input_shape[1], input_shape[2], input_shape[3])
-
-def squeeze_dims(x):
-    return K.squeeze(x,0)
-def squeezed_dims_output_shape(input_shape):
-    return (input_shape[1], input_shape[2], input_shape[3], input_shape[4])
-
-ExpandDimension = lambda axis: Lambda(lambda x: K.expand_dims(x, axis))
-SqueezeDimension = lambda axis: Lambda(lambda x: K.squeeze(x, axis))
-
-def create_3D_Addition(model, desired_layer_name=None):
-    all_layers = model.layers
-    layer = [layer for layer in all_layers if layer.name == desired_layer_name][0]
-    layer_output = layer.output  # We already have the input
-    x = ExpandDimension(0)(layer_output)
-    x = Conv3D(16,(3,3,3),activation='elu',padding='same')(x)
-    output = Conv3D(2,(1,1,1),activation='softmax')(x)
-    output = SqueezeDimension(0)(output)
-    activation_model = Model(inputs=model.input, outputs=output)
-    return activation_model
 if __name__ == '__main__':
     xxx = 1
