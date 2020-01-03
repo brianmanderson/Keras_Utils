@@ -16,6 +16,25 @@ from skimage.morphology import label
 from tensorflow.python.client import device_lib
 
 
+def save_obj(path, obj): # Save almost anything.. dictionary, list, etc.
+    if path.find('.pkl') == -1:
+        path += '.pkl'
+    with open(path, 'wb') as f:
+        pickle.dump(obj, f, pickle.DEFAULT_PROTOCOL)
+    return None
+
+
+def load_obj(path):
+    if path.find('.pkl') == -1:
+        path += '.pkl'
+    if os.path.exists(path):
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    else:
+        out = {}
+        return out
+
+
 def remove_non_liver(annotations, threshold=0.5, volume_threshold=9999999, do_2D=False):
     annotations = copy.deepcopy(annotations)
     annotations = np.squeeze(annotations)
