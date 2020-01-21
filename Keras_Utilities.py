@@ -1489,6 +1489,7 @@ def weighted_categorical_crossentropy_masked(weights):
     weights = K.variable(weights)
 
     def loss(y_true, y_pred, mask, axis=-1):
+        y_pred = y_pred * mask
         output_dimensions = list(range(len(y_pred.get_shape())))
         if axis != -1 and axis not in output_dimensions:
             raise ValueError(
@@ -1501,11 +1502,40 @@ def weighted_categorical_crossentropy_masked(weights):
         # clip to prevent NaN's and Inf's
         y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
         loss = y_true * K.log(y_pred) * weights
-        loss = loss * mask
         loss = -K.sum(loss, -1)
         return loss
     return loss
 
+
+def categorical_crossentropy_masked():
+    """
+    A weighted version of keras.objectives.categorical_crossentropy
+
+    Variables:
+        weights: numpy array of shape (C,) where C is the number of classes
+
+    Usage:
+        weights = np.array([0.5,2,10]) # Class one at 0.5, class 2 twice the normal weights, class 3 10x.
+        loss = weighted_categorical_crossentropy(weights)
+        model.compile(loss=loss,optimizer='adam')
+    """
+    def loss(y_true, y_pred, mask, axis=-1):
+        y_pred = y_pred * mask
+        output_dimensions = list(range(len(y_pred.get_shape())))
+        if axis != -1 and axis not in output_dimensions:
+            raise ValueError(
+                '{}{}{}'.format(
+                    'Unexpected channels axis {}. '.format(axis),
+                    'Expected to be -1 or one of the axes of `output`, ',
+                    'which has {} dimensions.'.format(len(y_pred.get_shape()))))
+
+        y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
+        # clip to prevent NaN's and Inf's
+        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+        loss = y_true * K.log(y_pred)
+        loss = -K.sum(loss, -1)
+        return loss
+    return loss
 
 
 def pad_depth(x, desired_channels):
@@ -1566,47 +1596,6 @@ def weighted_mse(y_true, y_pred, weights):
 
 def weighted_mse_polar(y_true, y_pred, weights=K.variable(np.array([1,2,2]))):
     return K.mean(K.abs(y_true - y_pred) * weights, axis=-1)
-
-
-def categorical_crossentropy_masked(y_true, y_pred, mask, axis=-1):
-    """Categorical crossentropy between an output tensor and a target tensor.
-
-    # Arguments
-        target: A tensor of the same shape as `output`.
-        output: A tensor resulting from a softmax
-            (unless `from_logits` is True, in which
-            case `output` is expected to be the logits).
-        from_logits: Boolean, whether `output` is the
-            result of a softmax, or is a tensor of logits.
-        axis: Int specifying the channels axis. `axis=-1`
-            corresponds to data format `channels_last`,
-            and `axis=1` corresponds to data format
-            `channels_first`.
-
-    # Returns
-        Output tensor.
-
-    # Raises
-        ValueError: if `axis` is neither -1 nor one of
-            the axes of `output`.
-    """
-    output_dimensions = list(range(len(y_pred.get_shape())))
-    if axis != -1 and axis not in output_dimensions:
-        raise ValueError(
-            '{}{}{}'.format(
-                'Unexpected channels axis {}. '.format(axis),
-                'Expected to be -1 or one of the axes of `output`, ',
-                'which has {} dimensions.'.format(len(y_pred.get_shape()))))
-    # Note: tf.nn.softmax_cross_entropy_with_logits
-    # expects logits, Keras expects probabilities.
-    # scale preds so that the class probs of each sample sum to 1
-    y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
-    # clip to prevent NaN's and Inf's
-    y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
-    loss = y_true * K.log(y_pred)
-    loss = loss * mask
-    loss = -K.sum(loss, -1)
-    return loss
 
 
 if __name__ == '__main__':
