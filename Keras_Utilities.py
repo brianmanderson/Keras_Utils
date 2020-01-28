@@ -1,5 +1,6 @@
 from keras.callbacks import Callback, LearningRateScheduler, ModelCheckpoint
 from keras.models import load_model, Model
+from tensorflow.compat.v1.nn import weighted_cross_entropy_with_logits
 import keras.backend as K
 import tensorflow as tf
 import SimpleITK as sitk
@@ -1535,6 +1536,22 @@ def categorical_crossentropy_masked():
         loss = y_true * K.log(y_pred)
         loss = -K.sum(loss, -1)
         return loss
+    return loss
+
+
+def balanced_cross_entropy(beta):
+    def convert_to_logits(y_pred):
+        # see https://github.com/tensorflow/tensorflow/blob/r1.10/tensorflow/python/keras/backend.py#L3525
+        y_pred = tf.clip_by_value(y_pred, tf.keras.backend.epsilon(), 1 - tf.keras.backend.epsilon())
+        return tf.log(y_pred / (1 - y_pred))
+
+    def loss(y_true, y_pred):
+        y_pred = convert_to_logits(y_pred)
+        pos_weight = beta / (1 - beta)
+        loss = tf.nn.weighted_cross_entropy_with_logits(logits=y_pred, labels=y_true, pos_weight=pos_weight)
+        # or reduce_sum and/or axis=-1
+        return -tf.reduce_sum(loss,-1)
+
     return loss
 
 
