@@ -1,13 +1,12 @@
-from keras.callbacks import Callback, LearningRateScheduler, ModelCheckpoint
-from keras.models import load_model, Model
-from tensorflow.compat.v1.nn import weighted_cross_entropy_with_logits
-import keras.backend as K
+from tensorflow.keras.callbacks import Callback, LearningRateScheduler, ModelCheckpoint
+from tensorflow.keras.models import load_model, Model
+import tensorflow.keras.backend as K
 import tensorflow as tf
 import SimpleITK as sitk
-from keras.backend import resize_images
-from keras.layers import Input, UpSampling3D
+from tensorflow.keras.backend import resize_images
+from tensorflow.keras.layers import Input, UpSampling3D
 import numpy as np
-from tensorflow.compat.v1 import Graph, Session, ConfigProto, GPUOptions
+from tensorflow import Graph, Session, ConfigProto, GPUOptions
 from skimage.measure import block_reduce
 import math, warnings, cv2, os, copy, time, glob, pickle
 from skimage import morphology
