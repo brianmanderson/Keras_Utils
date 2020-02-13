@@ -1,10 +1,10 @@
-from tensorflow.keras.callbacks import Callback, LearningRateScheduler, ModelCheckpoint
-from tensorflow.keras.models import load_model, Model
-import tensorflow.keras.backend as K
+from tensorflow.python.keras.callbacks import Callback, LearningRateScheduler, ModelCheckpoint
+from tensorflow.python.keras.models import load_model, Model
+import tensorflow.python.keras.backend as K
 import tensorflow as tf
 import SimpleITK as sitk
-from tensorflow.keras.backend import resize_images
-from tensorflow.keras.layers import Input, UpSampling3D
+from tensorflow.python.keras.backend import resize_images
+from tensorflow.python.keras.layers import Input, UpSampling3D
 import numpy as np
 from tensorflow import Graph, Session, ConfigProto, GPUOptions
 from skimage.measure import block_reduce
