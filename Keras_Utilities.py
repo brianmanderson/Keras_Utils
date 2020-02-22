@@ -219,10 +219,7 @@ class New_Learning_Scheduler(LearningRateScheduler):
 
 class Resize_Images_Keras():
     def __init__(self,num_channels=1,image_size=256):
-        if tf.__version__ == '1.14.0':
-            device = tf.compat.v1.device
-        else:
-            device = tf.device
+        device = tf.device
         with device('/gpu:0'):
             self.graph1 = Graph()
             with self.graph1.as_default():
