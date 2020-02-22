@@ -1,7 +1,7 @@
 from tensorflow.python.keras.callbacks import Callback, LearningRateScheduler, ModelCheckpoint
 from tensorflow.python.keras.models import load_model, Model
 import tensorflow.python.keras.backend as K
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 import SimpleITK as sitk
 from tensorflow.python.keras.backend import resize_images
 from tensorflow.python.keras.layers import Input, UpSampling3D
