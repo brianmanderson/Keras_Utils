@@ -11,7 +11,6 @@ from skimage.measure import block_reduce
 import math, warnings, cv2, os, copy, time, glob, pickle
 from skimage import morphology
 from skimage.morphology import label
-from tensorflow.python.client import device_lib
 
 
 def save_obj(path, obj): # Save almost anything.. dictionary, list, etc.
@@ -1434,11 +1433,6 @@ def dice_coef(y_true, y_pred, smooth=0.1):
     """
     intersection = K.sum(K.abs(y_true[...,1] * y_pred[...,1]))
     return (2. * intersection + smooth) / (K.sum((y_true[...,1])) + K.sum(y_pred[...,1]) + smooth)
-
-
-def get_available_gpus():
-    local_device_protos = device_lib.list_local_devices()
-    return [x.name for x in local_device_protos if x.device_type == 'GPU']
 
 
 class Up_Sample_Class(object):
