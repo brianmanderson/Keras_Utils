@@ -1235,14 +1235,10 @@ def dice_coef_2D(y_true, y_pred, smooth=0.0001):
     return background + 5*classes
 
 
-def jaccard_coef_3D(y_true, y_pred, smooth=0.0001):
-    intersection = K.sum(y_true[:,:,:,:,1:] * y_pred[:,:,:,:,1:])
-    union = K.sum(y_true[:,:,:,:,1:]) + K.sum(y_pred[:,:,:,:,1:])
-    classes = (intersection + smooth) / (union - intersection)
-    intersection = K.sum(y_true[:,:,:,:,0] * y_pred[:,:,:,:,0])
-    union = K.sum(y_true[:,:,:,:,0]) + K.sum(y_pred[:,:,:,:,0])
-    background = (intersection + smooth) / (union - intersection)
-    return background + 5*classes
+def jaccard_coef_3D_np(y_true, y_pred, smooth):
+    intersection = np.sum(y_true[...,1:] * y_pred[...,1:])
+    union = np.sum(y_true[...,1:]) + np.sum(y_pred[...,1:])
+    return (intersection + smooth) / (union - intersection + smooth)
 
 
 def jaccard_coef_2D(y_true, y_pred, smooth=0.0001):
